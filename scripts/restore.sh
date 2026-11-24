@@ -41,14 +41,45 @@ cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 # ---------- 安全检查：Kuma 在跑就别动 data ----------
+# 判据（收紧过）：必须是 **node 进程**，且 argv 里的 server/server.js
+# 按该进程的 cwd 解析后，正好等于本目录的 uptime-kuma/server/server.js。
+#
+# 旧实现只 grep /proc/*/cmdline 里的 'server/server.js' 字符串，导致任何
+# 命令行里带这串的进程（编辑器、tail、grep、CI 命令）都被当成 Kuma 在跑，
+# 恢复被无故拒绝。现在多要求两点：argv[0] 是 node/nodejs、路径解析后命中本目录。
 kuma_running() {
-    local d pid
+    local target d pid cwd arg real
+    target="$(readlink -f "$APP_DIR/uptime-kuma/server/server.js" 2>/dev/null || true)"
+    [ -n "$target" ] || return 1
+
     for d in /proc/[0-9]*; do
         pid="${d##*/}"
+        [ "$pid" = "$$" ] && continue
         [ -r "$d/cmdline" ] || continue
-        if tr '\0' ' ' < "$d/cmdline" 2>/dev/null | grep -q 'server/server\.js'; then
-            return 0
-        fi
+
+        # argv[0] 必须是 node / nodejs，否则不可能是 Kuma
+        arg=""
+        IFS= read -r -d '' arg < "$d/cmdline" 2>/dev/null || true
+        case "${arg##*/}" in
+            node|nodejs) ;;
+            *) continue ;;
+        esac
+
+        cwd="$(readlink -f "$d/cwd" 2>/dev/null || true)"
+
+        while IFS= read -r -d '' arg; do
+            case "$arg" in
+                *server/server.js)
+                    case "$arg" in
+                        /*) real="$arg" ;;
+                        *)  real="$cwd/$arg" ;;
+                    esac
+                    if [ "$(readlink -f "$real" 2>/dev/null || true)" = "$target" ]; then
+                        return 0
+                    fi
+                    ;;
+            esac
+        done < "$d/cmdline" 2>/dev/null || true
     done
     return 1
 }
