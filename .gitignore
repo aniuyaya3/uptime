@@ -1,0 +1,22 @@
+# 运行时产物
+data/
+uptime-kuma/
+backups/
+.agent.yaml
+.agent.pid
+.watchdog.pid
+.kuma-download.*
+
+# 大文件走 Release，不进 git（39MB 二进制会让 clone 变重）
+dist/*.tar.gz
+
+# 凭据（绝不能提交）
+.webdav.pass
+.webdav.user
+.backup.pass
+.nezha.secret
+*.secret
+*.pass
+.netrc
+.curlauth
+config.local.sh

@@ -1,0 +1,133 @@
+name: Build Uptime Kuma (amd64)
+
+# 产出: uptime-kuma-<version>.tar.gz （顶层目录 uptime-kuma/）
+#        + .sha256
+# 用法: Actions → 本 workflow → Run workflow → 填版本号（默认 2.5.12）
+#
+# 说明:
+#   * Node 20 —— Uptime Kuma 2.5.x 的 engines 是 >= 20.4.0，用 18 会踩坑
+#   * 已存在同名 release 时默认跳过；勾选 force 可重建
+#   * 只保留运行所需（server/ src/ dist/ db/ extra/ node_modules/）
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Uptime Kuma tag（例如 2.5.12）"
+        required: true
+        default: "2.5.12"
+      force:
+        description: "已存在同名 release 时仍然重建"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Resolve version
+        id: v
+        run: |
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            V=$(curl -fsSL https://api.github.com/repos/louislam/uptime-kuma/releases/latest \
+                | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          [ -n "$V" ] || { echo "无法确定版本"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "building $V"
+
+      - name: Check existing release
+        id: chk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ steps.v.outputs.version }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip notice
+        if: steps.chk.outputs.exists == 'true' && !inputs.force
+        run: |
+          echo "::notice::release ${{ steps.v.outputs.version }} 已存在，跳过（勾选 force 可重建）"
+
+      - name: Download source
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          curl -fsSL "https://github.com/louislam/uptime-kuma/archive/refs/tags/${V}.tar.gz" -o src.tar.gz
+          mkdir -p uptime-kuma
+          tar -xzf src.tar.gz -C uptime-kuma --strip-components=1
+          rm -f src.tar.gz
+          echo "--- package.json 摘要 ---"
+          grep -m1 '"version"' uptime-kuma/package.json
+          node -e 'const p=require("./uptime-kuma/package.json");console.log("engines:",JSON.stringify(p.engines))'
+
+      - name: Setup Node 20
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install + build frontend
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        working-directory: uptime-kuma
+        run: |
+          node -v
+          npm ci
+          npm run build
+          test -f dist/index.html || { echo "dist/index.html 缺失，构建失败"; exit 1; }
+          du -sh dist
+
+      - name: Production deps only
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        working-directory: uptime-kuma
+        run: |
+          rm -rf node_modules
+          npm ci --omit=dev
+          node -e 'require("@louislam/sqlite3"); console.log("sqlite3 可加载")'
+
+      - name: Trim
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        working-directory: uptime-kuma
+        run: |
+          rm -rf .git .github .vscode test docker
+          rm -f .dockerignore .editorconfig .gitignore .prettierignore *.md CNAME compose.yaml
+          find node_modules -name '*.md' -o -name '*.map' -o -name 'LICENSE*' -o -name 'CHANGELOG*' | xargs -r rm -f
+          find node_modules -type d \( -name test -o -name tests -o -name docs -o -name .github \) -prune -exec rm -rf {} +
+          du -sh .
+          ls -la
+
+      - name: Package
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          tar -czf "uptime-kuma-${V}.tar.gz" uptime-kuma
+          sha256sum "uptime-kuma-${V}.tar.gz" > "uptime-kuma-${V}.tar.gz.sha256"
+          cat "uptime-kuma-${V}.tar.gz.sha256"
+          ls -lh uptime-kuma-*.tar.gz
+
+      - name: Publish release
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.version }}
+          name: Uptime Kuma ${{ steps.v.outputs.version }} (amd64)
+          body: |
+            Uptime Kuma ${{ steps.v.outputs.version }} 预构建包（linux/amd64，Node 20 构建）
+
+            包含: dist/（前端构建）、server/、src/、db/、extra/、生产依赖
+
+            部署时把 config.sh 里的 KUMA_DOWNLOAD_URL 指向本 release，
+            并把 .sha256 的内容填进 KUMA_SHA256。
+          files: |
+            uptime-kuma-${{ steps.v.outputs.version }}.tar.gz
+            uptime-kuma-${{ steps.v.outputs.version }}.tar.gz.sha256
+          fail_on_unmatched_files: true

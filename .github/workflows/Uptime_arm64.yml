@@ -1,0 +1,136 @@
+name: Build Uptime Kuma (arm64)
+
+# ARM64 需要 QEMU + 从源码重编 sqlite3 的 native binding。
+# 产出: uptime-kuma-<version>-arm64.tar.gz （顶层目录 uptime-kuma/）
+#
+# 注意: 上游原版这里用的是 node:18，对 2.5.x（engines >= 20.4.0）不满足，已改为 node:20。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Uptime Kuma tag（例如 2.5.12）"
+        required: true
+        default: "2.5.12"
+      force:
+        description: "已存在同名 release 时仍然重建"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Resolve version
+        id: v
+        run: |
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            V=$(curl -fsSL https://api.github.com/repos/louislam/uptime-kuma/releases/latest \
+                | grep -m1 '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          [ -n "$V" ] || { echo "无法确定版本"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Check existing release
+        id: chk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.v.outputs.version }}-arm64"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Download source
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          curl -fsSL "https://github.com/louislam/uptime-kuma/archive/refs/tags/${V}.tar.gz" -o src.tar.gz
+          mkdir -p src && tar -xzf src.tar.gz -C src --strip-components=1
+          rm -f src.tar.gz
+          mkdir -p output
+
+      - name: Build in arm64 container
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/src:/src:ro" \
+            -v "$PWD/output:/output" \
+            -e VERSION="$VERSION" \
+            node:20-bookworm bash -c '
+              set -euo pipefail
+              echo "arch=$(uname -m) node=$(node -v)"
+              apt-get update -qq
+              apt-get install -y -qq python3 build-essential file > /dev/null
+
+              cp -r /src /build && cd /build
+              npm ci
+              npm run build
+              test -f dist/index.html
+
+              rm -rf node_modules
+              npm ci --omit=dev
+
+              echo "[sqlite3] 重编 arm64 binding ..."
+              cd node_modules/@louislam/sqlite3
+              npx --yes node-pre-gyp rebuild --build-from-source
+              BINDING=$(find . -name node_sqlite3.node -type f | head -1)
+              [ -n "$BINDING" ] || { echo "binding 缺失"; exit 1; }
+              file "$BINDING" | grep -qi "aarch64\|ARM" || { echo "binding 不是 arm64"; exit 1; }
+              EXPECTED="lib/binding/napi-v6-linux-arm64/node_sqlite3.node"
+              mkdir -p "$(dirname $EXPECTED)"
+              cp "$BINDING" "$EXPECTED"
+              file "$EXPECTED"
+              cd /build
+
+              node -e "require(\"@louislam/sqlite3\"); console.log(\"sqlite3 ok\")"
+
+              rm -rf .git .github .vscode test docker
+              rm -f .dockerignore .editorconfig .gitignore .prettierignore *.md CNAME compose.yaml
+              find node_modules -name "*.md" -o -name "*.map" -o -name "LICENSE*" -o -name "CHANGELOG*" | xargs -r rm -f
+              find node_modules -type d \( -name test -o -name tests -o -name docs -o -name .github \) -prune -exec rm -rf {} +
+
+              mv /build /output/uptime-kuma
+              echo "build done"
+            '
+
+      - name: Package
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        run: |
+          V="${{ steps.v.outputs.version }}"
+          cd output
+          tar -czf "../uptime-kuma-${V}-arm64.tar.gz" uptime-kuma
+          cd ..
+          sha256sum "uptime-kuma-${V}-arm64.tar.gz" > "uptime-kuma-${V}-arm64.tar.gz.sha256"
+          cat "uptime-kuma-${V}-arm64.tar.gz.sha256"
+
+      - name: Publish release
+        if: steps.chk.outputs.exists == 'false' || inputs.force
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.v.outputs.version }}-arm64
+          name: Uptime Kuma ${{ steps.v.outputs.version }} (arm64)
+          body: |
+            Uptime Kuma ${{ steps.v.outputs.version }} 预构建包（linux/arm64，Node 20 构建）
+
+            sqlite3 binding 已在 arm64 容器内从源码重编并校验架构。
+          files: |
+            uptime-kuma-${{ steps.v.outputs.version }}-arm64.tar.gz
+            uptime-kuma-${{ steps.v.outputs.version }}-arm64.tar.gz.sha256
+          fail_on_unmatched_files: true
