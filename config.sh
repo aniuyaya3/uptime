@@ -23,9 +23,9 @@ NODE_HEAP_MB="${NODE_HEAP_MB:-512}"  # 2.5.x 建议 512；内存 <512MB 时改 3
 
 # ---------- 预构建包 ----------
 KUMA_VERSION="${KUMA_VERSION:-2.5.12}"
-KUMA_DOWNLOAD_URL="${KUMA_DOWNLOAD_URL:-https://github.com/<你的用户名>/<你的仓库>/releases/download/2.5.12/uptime-kuma-2.5.12.tar.gz}"
+KUMA_DOWNLOAD_URL="${KUMA_DOWNLOAD_URL:-https://github.com/aniuyaya3/uptime/releases/download/2.5.12/uptime-kuma-2.5.12.tar.gz}"
 # 强烈建议填上 workflow 产出的 sha256（该文件内容的第一列），防止包被替换
-KUMA_SHA256="${KUMA_SHA256:-}"
+KUMA_SHA256="${KUMA_SHA256:-7f3b0cb24b2e790c5457bd80f18114843c37880025f0a81d9e91de3332f72cea}"
 ALLOW_INSECURE_URL="${ALLOW_INSECURE_URL:-0}"   # 1 = 允许 http（不建议）
 
 # ---------- WebDAV 备份 ----------

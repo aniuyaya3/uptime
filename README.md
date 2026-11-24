@@ -48,11 +48,13 @@ dist/                  # 已构建好的 2.5.12 包（见下）
    ```
 4. **改 `config.sh`**：`PORT`、`WEBDAV_URL`、`WEBDAV_USER`、
    `WEBDAV_PASS_FILE=/绝对路径/.webdav.pass`、`BACKUP_PASS_FILE=/绝对路径/.backup.pass`。
-5. **预构建包**（三选一）：
-   - 直接把 `dist/uptime-kuma-2.5.12.tar.gz` 传上去，然后
+5. **预构建包**（默认已指向官方 Release，一般不用改）：
+   - 默认：`KUMA_DOWNLOAD_URL` 已填
+     `https://github.com/aniuyaya3/uptime/releases/download/2.5.12/uptime-kuma-2.5.12.tar.gz`，
+     `KUMA_SHA256` 已填好，启动时自动校验；
+   - 离线：把 `dist/uptime-kuma-2.5.12.tar.gz` 传进容器，改
      `KUMA_DOWNLOAD_URL="file:///绝对路径/uptime-kuma-2.5.12.tar.gz"`；
-   - 或先上传到你自己的 GitHub Release，填 https 地址 + `KUMA_SHA256`；
-   - 或用 `.github/workflows/Uptime_amd64.yml` 现场构建。
+   - 自建：用 `.github/workflows/Uptime_amd64.yml` 现场构建，换成自己的地址 + `KUMA_SHA256`。
 6. **Startup Command** 设为 `npm start`，启动。
 
 首次访问会先出现 **Setup Database**（选 SQLite）→ 再设管理员账号。
@@ -60,10 +62,15 @@ dist/                  # 已构建好的 2.5.12 包（见下）
 
 ## 已构建的产物
 
+已发布：<https://github.com/aniuyaya3/uptime/releases/tag/2.5.12>
+
 ```
-dist/uptime-kuma-2.5.12.tar.gz
-dist/uptime-kuma-2.5.12.tar.gz.sha256
+https://github.com/aniuyaya3/uptime/releases/download/2.5.12/uptime-kuma-2.5.12.tar.gz
+https://github.com/aniuyaya3/uptime/releases/download/2.5.12/uptime-kuma-2.5.12.tar.gz.sha256
+sha256 = 7f3b0cb24b2e790c5457bd80f18114843c37880025f0a81d9e91de3332f72cea
 ```
+
+本地也留了一份：`dist/uptime-kuma-2.5.12.tar.gz`（39MB，不进 git）
 
 - 顶层目录 `uptime-kuma/`（配合 `--strip-components=1`）
 - 含 `dist/`（前端）、`server/`、`src/`、`db/`、`extra/`、生产依赖
